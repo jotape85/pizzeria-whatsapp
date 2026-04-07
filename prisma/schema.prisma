@@ -1,0 +1,325 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── STORE ───────────────────────────────────────────────────────────────────
+
+model Store {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique         // e.g. "centro", "norte"
+  phone       String?                  // WA Business phone number displayed to customers
+  waNumberId  String?  @unique         // Meta phone_number_id — used for webhook routing
+  address     String?
+  isActive    Boolean  @default(true)
+  botEnabled  Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  orders        Order[]
+  botSessions   BotSession[]
+  webhookEvents WebhookEvent[]
+
+  @@map("stores")
+}
+
+// ─── CUSTOMER ────────────────────────────────────────────────────────────────
+
+model Customer {
+  id        String   @id @default(cuid())
+  phone     String   @unique           // E.164 format, e.g. +34612345678
+  name      String?                    // From WA profile or collected in bot flow
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conversations Conversation[]
+  orders        Order[]
+  cart          Cart?
+
+  @@map("customers")
+}
+
+// ─── CONVERSATION ─────────────────────────────────────────────────────────────
+
+model Conversation {
+  id         String             @id @default(cuid())
+  customerId String
+  customer   Customer           @relation(fields: [customerId], references: [id])
+  status     ConversationStatus @default(ACTIVE)
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+
+  messages   Message[]
+  botSession BotSession?
+
+  @@index([customerId])
+  @@map("conversations")
+}
+
+enum ConversationStatus {
+  ACTIVE
+  IDLE
+  CLOSED
+}
+
+// ─── MESSAGE ─────────────────────────────────────────────────────────────────
+
+model Message {
+  id             String        @id @default(cuid())
+  conversationId String
+  conversation   Conversation  @relation(fields: [conversationId], references: [id])
+  waMessageId    String?       @unique   // WhatsApp wamid
+  direction      Direction
+  type           MessageType   @default(TEXT)
+  content        String        // Text body or serialized payload description
+  metadata       Json?         // Raw WA message object for non-text types
+  status         MessageStatus @default(SENT)
+  sentAt         DateTime?
+  deliveredAt    DateTime?
+  readAt         DateTime?
+  createdAt      DateTime      @default(now())
+
+  @@index([conversationId])
+  @@map("messages")
+}
+
+enum Direction {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  AUDIO
+  VIDEO
+  DOCUMENT
+  INTERACTIVE_LIST
+  INTERACTIVE_BUTTON
+  TEMPLATE
+  UNKNOWN
+}
+
+enum MessageStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+// ─── BOT SESSION ─────────────────────────────────────────────────────────────
+
+model BotSession {
+  id             String       @id @default(cuid())
+  conversationId String       @unique
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  storeId        String?
+  store          Store?       @relation(fields: [storeId], references: [id])
+  state          BotState     @default(IDLE)
+  context        Json         @default("{}")  // Ephemeral: selectedCategoryId, productId, etc.
+  lastActivityAt DateTime     @default(now())
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@map("bot_sessions")
+}
+
+enum BotState {
+  IDLE
+  GREETING
+  CATEGORY_SELECTION
+  PRODUCT_SELECTION
+  VARIANT_SELECTION
+  ADDING_NOTE
+  CART_REVIEW
+  CONFIRMING
+  AWAITING_PAYMENT
+  ORDER_COMPLETE
+}
+
+// ─── CART ─────────────────────────────────────────────────────────────────────
+
+model Cart {
+  id         String     @id @default(cuid())
+  customerId String     @unique
+  customer   Customer   @relation(fields: [customerId], references: [id])
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  items      CartItem[]
+
+  @@map("carts")
+}
+
+model CartItem {
+  id        String          @id @default(cuid())
+  cartId    String
+  cart      Cart            @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product         @relation(fields: [productId], references: [id])
+  variantId String?
+  variant   ProductVariant? @relation(fields: [variantId], references: [id])
+  quantity  Int             @default(1)
+  note      String?         // Customer note for this specific item
+  unitPrice Decimal         @db.Decimal(10, 2)
+  createdAt DateTime        @default(now())
+
+  @@map("cart_items")
+}
+
+// ─── ORDER ────────────────────────────────────────────────────────────────────
+
+model Order {
+  id            String        @id @default(cuid())
+  orderNumber   String        @unique     // ORD-2024-0001
+  customerId    String
+  customer      Customer      @relation(fields: [customerId], references: [id])
+  storeId       String
+  store         Store         @relation(fields: [storeId], references: [id])
+  status        OrderStatus   @default(DRAFT)
+  type          OrderType     @default(PICKUP)
+  total         Decimal       @db.Decimal(10, 2)
+  notes         String?
+  revoOrderId   String?       // TODO: populate when Revo Solo integration is active
+  paymentLink   String?       // TODO: populate from Revo Xpress
+  paymentStatus PaymentStatus @default(PENDING)
+  confirmedAt   DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  items         OrderItem[]
+
+  @@index([customerId])
+  @@index([storeId])
+  @@index([status])
+  @@map("orders")
+}
+
+model OrderItem {
+  id        String          @id @default(cuid())
+  orderId   String
+  order     Order           @relation(fields: [orderId], references: [id])
+  productId String
+  product   Product         @relation(fields: [productId], references: [id])
+  variantId String?
+  variant   ProductVariant? @relation(fields: [variantId], references: [id])
+  quantity  Int
+  unitPrice Decimal         @db.Decimal(10, 2)
+  note      String?
+
+  @@map("order_items")
+}
+
+enum OrderStatus {
+  DRAFT
+  CONFIRMED
+  AWAITING_PAYMENT
+  PAID
+  SENT_TO_KITCHEN  // TODO: trigger Revo Solo push when status changes to this
+  PREPARING
+  READY
+  COMPLETED
+  CANCELLED
+}
+
+enum OrderType {
+  PICKUP
+  DELIVERY
+}
+
+enum PaymentStatus {
+  PENDING
+  LINK_SENT
+  PAID
+  FAILED
+  REFUNDED
+}
+
+// ─── PRODUCT CATALOG ──────────────────────────────────────────────────────────
+
+model ProductCategory {
+  id          String    @id @default(cuid())
+  name        String
+  emoji       String?   // e.g. "🍕" — used in bot messages for quick identification
+  description String?
+  sortOrder   Int       @default(0)
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  products    Product[]
+
+  @@map("product_categories")
+}
+
+model Product {
+  id          String          @id @default(cuid())
+  categoryId  String
+  category    ProductCategory @relation(fields: [categoryId], references: [id])
+  name        String
+  description String?
+  basePrice   Decimal         @db.Decimal(10, 2)
+  imageUrl    String?
+  isActive    Boolean         @default(true)
+  sortOrder   Int             @default(0)
+  revoId      String?         // TODO: populate from Revo Solo catalog sync
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  variants    ProductVariant[]
+  cartItems   CartItem[]
+  orderItems  OrderItem[]
+
+  @@map("products")
+}
+
+model ProductVariant {
+  id          String   @id @default(cuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name        String   // e.g. "Pequeña", "Mediana", "Familiar"
+  priceAdjust Decimal  @db.Decimal(10, 2) @default(0)  // +/- from product.basePrice
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  revoId      String?  // TODO: populate from Revo Solo
+
+  cartItems   CartItem[]
+  orderItems  OrderItem[]
+
+  @@map("product_variants")
+}
+
+// ─── ORDER SEQUENCE ───────────────────────────────────────────────────────────
+
+model OrderSequence {
+  id      Int @id @default(1)  // Single-row table
+  year    Int
+  lastSeq Int @default(0)
+
+  @@map("order_sequences")
+}
+
+// ─── WEBHOOK EVENT LOG ────────────────────────────────────────────────────────
+
+model WebhookEvent {
+  id          String   @id @default(cuid())
+  storeId     String?
+  store       Store?   @relation(fields: [storeId], references: [id])
+  source      String   @default("whatsapp")
+  eventType   String?  // "messages" | "statuses"
+  waMessageId String?
+  payload     Json                        // Raw webhook body — never modified
+  processed   Boolean  @default(false)
+  error       String?
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([waMessageId])
+  @@map("webhook_events")
+}
