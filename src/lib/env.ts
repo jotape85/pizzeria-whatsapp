@@ -10,10 +10,10 @@ const envSchema = z.object({
   WHATSAPP_VERIFY_TOKEN: z.string().min(1),
   WHATSAPP_APP_SECRET: z.string().default(''),
 
-  // Provider selection
-  CATALOG_PROVIDER: z.enum(['mock', 'revo']).default('mock'),
-  ORDER_PROVIDER: z.enum(['mock', 'revo']).default('mock'),
-  PAYMENT_PROVIDER: z.enum(['mock', 'revo-xpress']).default('mock'),
+  // Provider selection (.catch ensures empty string from Vercel falls back to default)
+  CATALOG_PROVIDER: z.enum(['mock', 'revo']).catch('mock'),
+  ORDER_PROVIDER: z.enum(['mock', 'revo']).catch('mock'),
+  PAYMENT_PROVIDER: z.enum(['mock', 'revo-xpress']).catch('mock'),
 
   // Store
   DEFAULT_STORE_ID: z.string().default(''),
