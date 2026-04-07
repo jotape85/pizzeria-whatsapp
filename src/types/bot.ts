@@ -18,6 +18,9 @@ export interface BotContext {
   pendingCartItemProductId?: string;
   cartId?: string;
   orderId?: string;
+  // Payment flow
+  awaitingPaymentMethod?: boolean;   // true after order confirmed, waiting for card/cash choice
+  paymentMethod?: 'card' | 'cash';   // chosen payment method
 }
 
 export interface IncomingMessage {

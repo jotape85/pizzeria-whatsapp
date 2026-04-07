@@ -6,9 +6,12 @@ import type { BotSession } from '@prisma/client';
 /**
  * CONFIRMING state handler.
  *
- * Final confirmation before creating the order.
- * On "sí": creates the Order from the Cart, clears the cart, moves to AWAITING_PAYMENT.
- * On "no": returns to CART_REVIEW.
+ * Step 1 — Asks the customer to confirm the order (yes/no).
+ * Step 2 — Asks for payment method (card / cash).
+ *
+ * Card  → generates payment link → AWAITING_PAYMENT
+ * Cash  → confirms order directly → ORDER_COMPLETE (pays at pickup)
+ * No    → returns to CART_REVIEW
  */
 export class ConfirmingHandler implements StateHandler {
   async handle(
@@ -23,11 +26,17 @@ export class ConfirmingHandler implements StateHandler {
       ''
     ).toLowerCase().trim();
 
+    // ── Step 2: payment method selection ─────────────────────────────────────
+    if (context.awaitingPaymentMethod) {
+      return this.handlePaymentMethodChoice(input, message.from, context, services);
+    }
+
+    // ── Step 1: order confirmation ────────────────────────────────────────────
     const isYes = ['1', 'si', 'sí', 'yes', 'confirmar', 'confirmo', 'adelante'].includes(input);
-    const isNo = ['2', 'no', 'volver', 'cancelar'].includes(input);
+    const isNo  = ['2', 'no', 'volver', 'cancelar'].includes(input);
 
     if (isYes) {
-      return this.createOrderAndProceed(message.from, context, services);
+      return this.askPaymentMethod(message.from, context, services);
     }
 
     if (isNo) {
@@ -35,10 +44,11 @@ export class ConfirmingHandler implements StateHandler {
       return cartReviewHandler.sendCartReview(message.from, context, services);
     }
 
-    // Unclear — re-show confirmation
+    // Unclear — re-show confirmation prompt
     return this.sendConfirmation(message.from, context, services);
   }
 
+  // ── Public: called from cart-review when transitioning to CONFIRMING ─────────
   async sendConfirmation(
     to: string,
     context: BotContext,
@@ -46,25 +56,84 @@ export class ConfirmingHandler implements StateHandler {
   ): Promise<HandlerResult> {
     await services.whatsapp.sendButtons(to, {
       body:
-        '📋 Confirma tu pedido:\n\n' +
-        'Es *pedido para recoger* en tienda.\n\n' +
-        '¿Confirmas el pedido y procedemos al pago?',
+        '📋 *Confirma tu pedido*\n\n' +
+        'Pedido para *recoger en tienda*.\n\n' +
+        '¿Confirmas y procedemos al pago?',
       buttons: [
         { id: '1', title: '✅ Sí, confirmar' },
         { id: '2', title: '✏️ No, modificar' },
       ],
     });
 
+    return { nextState: 'CONFIRMING', context: { ...context, awaitingPaymentMethod: false } };
+  }
+
+  // ── Step 2a: ask how they want to pay ────────────────────────────────────────
+  private async askPaymentMethod(
+    to: string,
+    context: BotContext,
+    services: HandlerServices
+  ): Promise<HandlerResult> {
+    await services.whatsapp.sendButtons(to, {
+      body: '💳 ¿Cómo quieres pagar tu pedido?',
+      buttons: [
+        { id: 'pay_card', title: '💳 Pagar con tarjeta' },
+        { id: 'pay_cash', title: '💵 Efectivo al recoger' },
+      ],
+    });
+
+    return {
+      nextState: 'CONFIRMING',
+      context: { ...context, awaitingPaymentMethod: true },
+    };
+  }
+
+  // ── Step 2b: process payment method choice ────────────────────────────────────
+  private async handlePaymentMethodChoice(
+    input: string,
+    to: string,
+    context: BotContext,
+    services: HandlerServices
+  ): Promise<HandlerResult> {
+    const isCard = ['pay_card', '1', 'tarjeta', 'card', 'online'].includes(input);
+    const isCash = ['pay_cash', '2', 'efectivo', 'cash', 'local'].includes(input);
+
+    if (isCard) {
+      return this.createOrderAndProceed(
+        to,
+        { ...context, paymentMethod: 'card', awaitingPaymentMethod: false },
+        services
+      );
+    }
+
+    if (isCash) {
+      return this.createOrderAndProceed(
+        to,
+        { ...context, paymentMethod: 'cash', awaitingPaymentMethod: false },
+        services
+      );
+    }
+
+    // Unclear — re-ask
+    await services.whatsapp.sendButtons(to, {
+      body: '❓ Por favor elige cómo quieres pagar:',
+      buttons: [
+        { id: 'pay_card', title: '💳 Pagar con tarjeta' },
+        { id: 'pay_cash', title: '💵 Efectivo al recoger' },
+      ],
+    });
+
     return { nextState: 'CONFIRMING', context };
   }
 
+  // ── Create order in DB and branch by payment method ───────────────────────────
   private async createOrderAndProceed(
     to: string,
     context: BotContext,
     services: HandlerServices
   ): Promise<HandlerResult> {
     if (!context.cartId) {
-      await services.whatsapp.sendText(to, '⚠️ No encontré tu carrito. Vamos a empezar de nuevo.');
+      await services.whatsapp.sendText(to, '⚠️ No encontré tu carrito. Empecemos de nuevo.');
       const { categorySelectionHandler } = await import('./category-selection.handler');
       return categorySelectionHandler.sendCategories(to, context, services);
     }
@@ -78,7 +147,7 @@ export class ConfirmingHandler implements StateHandler {
     });
 
     if (!cart || cart.items.length === 0) {
-      await services.whatsapp.sendText(to, '⚠️ Tu carrito está vacío. Vamos a empezar de nuevo.');
+      await services.whatsapp.sendText(to, '⚠️ Tu carrito está vacío. Empecemos de nuevo.');
       const { categorySelectionHandler } = await import('./category-selection.handler');
       return categorySelectionHandler.sendCategories(to, context, services);
     }
@@ -87,6 +156,8 @@ export class ConfirmingHandler implements StateHandler {
       (sum, item) => sum + Number(item.unitPrice) * item.quantity,
       0
     );
+
+    const isCash = context.paymentMethod === 'cash';
 
     const orderResult = await services.order.createOrder({
       storeId: context.storeId,
@@ -101,20 +172,52 @@ export class ConfirmingHandler implements StateHandler {
         note: item.note ?? undefined,
       })),
       total,
+      notes: isCash ? '💵 Pago en efectivo al recoger' : '💳 Pago con tarjeta (online)',
     });
 
-    // Clear the cart after order creation
+    // Clear cart
     await prisma.cartItem.deleteMany({ where: { cartId: context.cartId } });
 
-    const newContext = { ...context, orderId: orderResult.orderId, cartId: undefined };
+    const newContext: BotContext = {
+      ...context,
+      orderId: orderResult.orderId,
+      cartId: undefined,
+      awaitingPaymentMethod: false,
+    };
 
+    // ── CASH: confirm directly, no payment link needed ──────────────────────
+    if (isCash) {
+      await prisma.order.update({
+        where: { id: orderResult.orderId },
+        data: { status: 'CONFIRMED', paymentStatus: 'PENDING' },
+      });
+
+      await services.whatsapp.sendText(
+        to,
+        `✅ ¡Pedido *${orderResult.orderNumber}* confirmado!\n\n` +
+          `💵 *Pago en efectivo al recoger en tienda*\n` +
+          `Total a pagar: *${formatPrice(total)}*\n\n` +
+          `Te avisamos cuando esté listo. ¡Gracias! 🍕`
+      );
+
+      return { nextState: 'ORDER_COMPLETE', context: newContext };
+    }
+
+    // ── CARD: generate payment link and send it ─────────────────────────────
     await services.whatsapp.sendText(
       to,
-      `✅ ¡Pedido *${orderResult.orderNumber}* creado!\n\nTotal: *${formatPrice(total)}*\n\nAhora generamos tu link de pago...`
+      `✅ ¡Pedido *${orderResult.orderNumber}* creado!\n\nTotal: *${formatPrice(total)}*\n\nGenerando tu link de pago...`
     );
 
     const { awaitingPaymentHandler } = await import('./awaiting-payment.handler');
-    return awaitingPaymentHandler.sendPaymentLink(to, newContext, cart.customer.phone, total, orderResult.orderNumber, services);
+    return awaitingPaymentHandler.sendPaymentLink(
+      to,
+      newContext,
+      cart.customer.phone,
+      total,
+      orderResult.orderNumber,
+      services
+    );
   }
 }
 
