@@ -18,6 +18,9 @@ const envSchema = z.object({
   // Store
   DEFAULT_STORE_ID: z.string().default(''),
 
+  // Business rules
+  CASH_PAYMENT_MAX_AMOUNT: z.coerce.number().nonnegative().default(40), // Orders above this amount require card payment
+
   // Revo (future)
   REVO_API_BASE_URL: z.string().default(''),
   REVO_API_KEY: z.string().default(''),

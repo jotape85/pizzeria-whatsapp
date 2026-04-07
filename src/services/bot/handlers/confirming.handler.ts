@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma';
+import { env } from '@/lib/env';
 import { formatPrice } from '@/lib/utils';
 import type { BotContext, HandlerResult, IncomingMessage, HandlerServices, StateHandler } from '../bot.types';
 import type { BotSession } from '@prisma/client';
@@ -68,12 +69,35 @@ export class ConfirmingHandler implements StateHandler {
     return { nextState: 'CONFIRMING', context: { ...context, awaitingPaymentMethod: false } };
   }
 
-  // ── Step 2a: ask how they want to pay ────────────────────────────────────────
+  // ── Step 2a: ask how they want to pay (or force card if above threshold) ────
   private async askPaymentMethod(
     to: string,
     context: BotContext,
     services: HandlerServices
   ): Promise<HandlerResult> {
+    // Calculate cart total to check against cash payment threshold
+    const cartTotal = context.cartId
+      ? await prisma.cartItem
+          .findMany({ where: { cartId: context.cartId } })
+          .then((items) => items.reduce((sum, i) => sum + Number(i.unitPrice) * i.quantity, 0))
+      : 0;
+
+    const maxCash = env.CASH_PAYMENT_MAX_AMOUNT;
+
+    if (maxCash > 0 && cartTotal > maxCash) {
+      // Force card payment — inform the customer why
+      await services.whatsapp.sendText(
+        to,
+        `ℹ️ Para pedidos superiores a *${formatPrice(maxCash)}*, el pago online con tarjeta es obligatorio por seguridad.\n\nGenerando tu link de pago...`
+      );
+      return this.createOrderAndProceed(
+        to,
+        { ...context, paymentMethod: 'card', awaitingPaymentMethod: false },
+        services
+      );
+    }
+
+    // Below threshold — offer both options
     await services.whatsapp.sendButtons(to, {
       body: '💳 ¿Cómo quieres pagar tu pedido?',
       buttons: [
