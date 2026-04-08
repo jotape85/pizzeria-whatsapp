@@ -3,15 +3,6 @@ import { formatPrice } from '@/lib/utils';
 import type { BotContext, HandlerResult, IncomingMessage, HandlerServices, StateHandler } from '../bot.types';
 import type { BotSession } from '@prisma/client';
 
-/**
- * CART_REVIEW state handler.
- *
- * Shows the current cart contents and total.
- * Transitions:
- *   → CONFIRMING on "1" / confirmar
- *   → CATEGORY_SELECTION on "2" / agregar más
- *   → IDLE on "3" / vaciar carrito
- */
 export class CartReviewHandler implements StateHandler {
   async handle(
     message: IncomingMessage,
@@ -64,12 +55,8 @@ export class CartReviewHandler implements StateHandler {
     services: HandlerServices
   ): Promise<HandlerResult> {
     if (!context.cartId) {
-      // Cart not in context — try to find it from the customer
+      await services.whatsapp.sendText(to, '🛒 Tu carrito está vacío. ¡Elige algo del menú!');
       const { categorySelectionHandler } = await import('./category-selection.handler');
-      await services.whatsapp.sendText(
-        to,
-        '🛒 Tu carrito está vacío. Elige algo del menú:'
-      );
       return categorySelectionHandler.sendCategories(to, context, services);
     }
 
@@ -77,20 +64,23 @@ export class CartReviewHandler implements StateHandler {
       where: { id: context.cartId },
       include: {
         items: {
-          include: { product: true, variant: true },
+          include: {
+            product: { include: { category: true } },
+            variant: true,
+          },
           orderBy: { createdAt: 'asc' },
         },
       },
     });
 
     if (!cart || cart.items.length === 0) {
+      await services.whatsapp.sendText(to, '🛒 Tu carrito está vacío. ¡Elige algo del menú!');
       const { categorySelectionHandler } = await import('./category-selection.handler');
-      await services.whatsapp.sendText(to, '🛒 Tu carrito está vacío. Elige algo del menú:');
       return categorySelectionHandler.sendCategories(to, context, services);
     }
 
-    // Build cart summary text
-    let summary = '🛒 *Tu pedido:*\n\n';
+    // Build cart summary
+    let summary = '🛒 *¡Tu pedido tiene muy buena pinta!*\n\n';
     let total = 0;
 
     cart.items.forEach((item, i) => {
@@ -100,11 +90,27 @@ export class CartReviewHandler implements StateHandler {
 
       summary += `${i + 1}. *${item.product.name}*${variantName}\n`;
       summary += `   ${formatPrice(itemTotal)}`;
-      if (item.note) summary += `  _(${item.note})_`;
+      if (item.note) summary += `  _✏️ ${item.note}_`;
       summary += '\n';
     });
 
-    summary += `\n💰 *Total: ${formatPrice(total)}*\n\n¿Qué hacemos?`;
+    summary += `\n💰 *Total: ${formatPrice(total)}*`;
+
+    // Smart upsell: suggest drinks or desserts if missing
+    const categoryNames = cart.items.map((i) => i.product.category.name.toLowerCase());
+    const hasDrink = categoryNames.some((n) => n.includes('bebida') || n.includes('refresco') || n.includes('drink'));
+    const hasDessert = categoryNames.some((n) => n.includes('postre') || n.includes('dessert') || n.includes('dulce'));
+    const hasFood = categoryNames.some((n) => n.includes('pizza') || n.includes('entrante') || n.includes('principal'));
+
+    if (hasFood && !hasDrink && !hasDessert) {
+      summary += `\n\n💡 ¿Le añadimos una bebida o postre? ¡Están buenísimos y completan el pedido! 😄`;
+    } else if (hasFood && !hasDrink) {
+      summary += `\n\n🥤 ¿Una bebida para acompañar? ¡Las tenemos bien frías!`;
+    } else if (hasFood && !hasDessert) {
+      summary += `\n\n🍰 ¿Un postre para el final? ¡Son irresistibles!`;
+    }
+
+    summary += `\n\n¿Qué hacemos?`;
 
     await services.whatsapp.sendButtons(to, {
       body: summary,

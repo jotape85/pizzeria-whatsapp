@@ -1,16 +1,6 @@
 import type { BotContext, HandlerResult, IncomingMessage, HandlerServices, StateHandler } from '../bot.types';
 import type { BotSession } from '@prisma/client';
 
-/**
- * AWAITING_PAYMENT state handler.
- *
- * Sends the payment link and waits for confirmation.
- * Payment is confirmed either:
- *   a) By the payment provider webhook (future: Revo Xpress)
- *   b) Manually via admin panel "Marcar como pagado" button (MVP)
- *
- * On session timeout (30 min inactivity) the bot resets to IDLE in bot.service.ts.
- */
 export class AwaitingPaymentHandler implements StateHandler {
   async handle(
     message: IncomingMessage,
@@ -23,15 +13,14 @@ export class AwaitingPaymentHandler implements StateHandler {
     if (input === 'cancelar' || input === 'cancel') {
       await services.whatsapp.sendText(
         message.from,
-        '❌ Pedido cancelado. ¡Escríbenos cuando quieras!'
+        '❌ Pedido cancelado. ¡Cuando quieras volver a pedir, aquí estaremos! 🍕'
       );
       return { nextState: 'IDLE', context: { storeId: context.storeId } };
     }
 
-    // Any other message — remind customer about pending payment
     await services.whatsapp.sendText(
       message.from,
-      `⏳ Tu pedido está pendiente de pago. Usa el link que te enviamos para completar la compra.\n\nEscribe "cancelar" si quieres anular el pedido.`
+      `⏳ Tu pedido está reservado y esperando el pago.\n\nUsa el link que te enviamos para completarlo — solo tarda un minuto 😊\n\nEscribe *"cancelar"* si quieres anular el pedido.`
     );
 
     return { nextState: 'AWAITING_PAYMENT', context };
@@ -60,15 +49,17 @@ export class AwaitingPaymentHandler implements StateHandler {
 
       await services.whatsapp.sendText(
         to,
-        `💳 *Link de pago para tu pedido ${orderNumber}:*\n\n${result.url}\n\n` +
-          `⏱️ Este link expira en 30 minutos.\n\n` +
-          `Una vez realizado el pago, recibirás la confirmación. ¡Gracias! 🍕`
+        `🔐 *Tu link de pago seguro está listo:*\n\n` +
+          `${result.url}\n\n` +
+          `Es un pago 100% seguro y solo tardas un minuto en completarlo 😊\n` +
+          `⏱️ El link es válido durante 30 minutos.\n\n` +
+          `¡En cuanto confirmes el pago, ponemos tu pedido en marcha! 🍕`
       );
     } catch (error) {
       console.error('[Bot] Error generating payment link:', error);
       await services.whatsapp.sendText(
         to,
-        `✅ Tu pedido *${orderNumber}* está confirmado. Te contactaremos para el pago. ¡Gracias!`
+        `✅ Tu pedido *${orderNumber}* está confirmado. Nos ponemos en contacto contigo para gestionar el pago. ¡Gracias!`
       );
     }
 

@@ -2,14 +2,6 @@ import { formatPrice } from '@/lib/utils';
 import type { BotContext, HandlerResult, IncomingMessage, HandlerServices, StateHandler } from '../bot.types';
 import type { BotSession } from '@prisma/client';
 
-/**
- * VARIANT_SELECTION state handler.
- *
- * Shows available variants (sizes) for the selected product.
- * Transitions:
- *   → ADDING_NOTE on valid variant selection
- *   → PRODUCT_SELECTION on "0" / back
- */
 export class VariantSelectionHandler implements StateHandler {
   async handle(
     message: IncomingMessage,
@@ -33,7 +25,6 @@ export class VariantSelectionHandler implements StateHandler {
       return categorySelectionHandler.sendCategories(message.from, context, services);
     }
 
-    // Verify the variant belongs to the current product
     const product = await services.catalog.getProductById(context.selectedProductId);
     const variant = product?.variants.find((v) => v.id === input);
 
@@ -46,7 +37,6 @@ export class VariantSelectionHandler implements StateHandler {
       );
     }
 
-    // Re-send variants
     return this.sendVariants(message.from, context, services);
   }
 
@@ -65,21 +55,22 @@ export class VariantSelectionHandler implements StateHandler {
     }
 
     await services.whatsapp.sendList(to, {
-      header: `📏 Elige el tamaño`,
-      body: `*${product.name}* — ¿Qué tamaño prefieres?`,
+      header: `🍕 ${product.name}`,
+      body:
+        `¡Buenísima elección! ¿Qué tamaño te viene mejor?\n\n` +
+        `• Pequeña — perfecta para 1 persona\n` +
+        `• Mediana — ideal para 1-2 personas\n` +
+        `• Familiar — genial para compartir en grupo`,
       footer: 'Escribe "0" para volver',
-      buttonText: 'Ver tamaños',
+      buttonText: 'Elegir tamaño',
       sections: [
         {
           title: 'Tamaños disponibles',
-          rows: product.variants.map((v) => {
-            const finalPrice = product.basePrice + v.priceAdjust;
-            return {
-              id: v.id,
-              title: v.name,
-              description: formatPrice(finalPrice),
-            };
-          }),
+          rows: product.variants.map((v) => ({
+            id: v.id,
+            title: v.name,
+            description: formatPrice(product.basePrice + v.priceAdjust),
+          })),
         },
       ],
     });

@@ -57,9 +57,9 @@ export class ConfirmingHandler implements StateHandler {
   ): Promise<HandlerResult> {
     await services.whatsapp.sendButtons(to, {
       body:
-        '📋 *Confirma tu pedido*\n\n' +
-        'Pedido para *recoger en tienda*.\n\n' +
-        '¿Confirmas y procedemos al pago?',
+        '🎉 *¡Pedido con muy buena pinta!*\n\n' +
+        'El pedido es para *recoger en tienda*.\n\n' +
+        '¿Lo confirmamos y elegimos cómo pagar?',
       buttons: [
         { id: '1', title: '✅ Sí, confirmar' },
         { id: '2', title: '✏️ No, modificar' },

@@ -2,16 +2,6 @@ import { formatPrice } from '@/lib/utils';
 import type { BotContext, HandlerResult, IncomingMessage, HandlerServices, StateHandler } from '../bot.types';
 import type { BotSession } from '@prisma/client';
 
-/**
- * PRODUCT_SELECTION state handler.
- *
- * Shows products for the selected category.
- * Transitions:
- *   → VARIANT_SELECTION if the selected product has variants
- *   → ADDING_NOTE if the product has no variants
- *   → CART_REVIEW if customer types "carrito"
- *   → CATEGORY_SELECTION on "0" / back
- */
 export class ProductSelectionHandler implements StateHandler {
   async handle(
     message: IncomingMessage,
@@ -35,7 +25,6 @@ export class ProductSelectionHandler implements StateHandler {
       return cartReviewHandler.sendCartReview(message.from, context, services);
     }
 
-    // Check if selection is a product ID
     const product = await services.catalog.getProductById(input);
 
     if (product) {
@@ -46,12 +35,10 @@ export class ProductSelectionHandler implements StateHandler {
         return variantSelectionHandler.sendVariants(message.from, newContext, services);
       }
 
-      // No variants — go straight to note
       const { addingNoteHandler } = await import('./adding-note.handler');
       return addingNoteHandler.askForNote(message.from, { ...newContext, selectedVariantId: undefined }, services);
     }
 
-    // Input not recognized — re-send product list
     if (!context.selectedCategoryId) {
       const { categorySelectionHandler } = await import('./category-selection.handler');
       return categorySelectionHandler.sendCategories(message.from, context, services);
@@ -75,20 +62,20 @@ export class ProductSelectionHandler implements StateHandler {
     if (products.length === 0) {
       await services.whatsapp.sendText(
         to,
-        '⚠️ No hay productos disponibles en esta categoría. Elige otra:'
+        '😔 Esta sección está agotada por hoy. Prueba con otra categoría:'
       );
       const { categorySelectionHandler } = await import('./category-selection.handler');
       return categorySelectionHandler.sendCategories(to, context, services);
     }
 
     await services.whatsapp.sendList(to, {
-      header: '🍕 Elige tu producto',
-      body: 'Selecciona uno de nuestros productos:',
-      footer: 'Escribe "0" para volver | "carrito" para ver tu pedido',
+      header: '✨ Elige tu producto',
+      body: '¡Todos están buenísimos! ¿Cuál te llama la atención?',
+      footer: 'Escribe "0" para volver | "carrito" para revisar tu pedido',
       buttonText: 'Ver productos',
       sections: [
         {
-          title: 'Productos disponibles',
+          title: 'Disponibles hoy',
           rows: products.map((p) => ({
             id: p.id,
             title: p.name,

@@ -144,6 +144,8 @@ export class BotService {
       pendingCartItemProductId: raw.pendingCartItemProductId as string | undefined,
       cartId: raw.cartId as string | undefined,
       orderId: raw.orderId as string | undefined,
+      awaitingPaymentMethod: raw.awaitingPaymentMethod as boolean | undefined,
+      paymentMethod: raw.paymentMethod as 'card' | 'cash' | undefined,
     };
   }
 

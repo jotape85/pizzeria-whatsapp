@@ -1,14 +1,6 @@
 import type { BotContext, HandlerResult, IncomingMessage, HandlerServices, StateHandler } from '../bot.types';
 import type { BotSession } from '@prisma/client';
 
-/**
- * CATEGORY_SELECTION state handler.
- *
- * Shows the list of active product categories.
- * Transitions:
- *   → PRODUCT_SELECTION on valid category selection
- *   → IDLE on "0" / "cancelar"
- */
 export class CategorySelectionHandler implements StateHandler {
   async handle(
     message: IncomingMessage,
@@ -25,12 +17,11 @@ export class CategorySelectionHandler implements StateHandler {
     if (input === '0' || input === 'cancelar' || input === 'salir') {
       await services.whatsapp.sendText(
         message.from,
-        '✅ Pedido cancelado. ¡Hasta pronto! Escríbenos cuando quieras pedir.'
+        '👋 ¡Sin problema! Cuando quieras pedir, aquí estaremos. ¡Hasta pronto!'
       );
       return { nextState: 'IDLE', context: { storeId: context.storeId } };
     }
 
-    // Check if the input matches a known category ID (from interactive reply)
     const categories = await services.catalog.getCategories();
     const selectedCategory = categories.find((c) => c.id === input);
 
@@ -43,7 +34,6 @@ export class CategorySelectionHandler implements StateHandler {
       );
     }
 
-    // Input not recognized — re-send categories
     return this.sendCategories(message.from, context, services);
   }
 
@@ -57,23 +47,23 @@ export class CategorySelectionHandler implements StateHandler {
     if (categories.length === 0) {
       await services.whatsapp.sendText(
         to,
-        '⚠️ No hay categorías disponibles en este momento. Por favor, inténtalo más tarde.'
+        '⚠️ La carta no está disponible ahora mismo. ¡Inténtalo de nuevo en unos minutos!'
       );
       return { nextState: 'IDLE', context: { storeId: context.storeId } };
     }
 
     await services.whatsapp.sendList(to, {
-      header: '📋 Nuestro menú',
-      body: '¿Qué te apetece hoy? Elige una categoría:',
-      footer: 'Escribe "0" para cancelar',
-      buttonText: 'Ver categorías',
+      header: '🍕 Nuestra carta',
+      body: '¡Todo recién preparado! ¿Por qué sección empezamos?',
+      footer: 'Escribe "0" si necesitas cancelar',
+      buttonText: 'Ver la carta',
       sections: [
         {
-          title: 'Categorías',
+          title: 'Elige una sección',
           rows: categories.map((c) => ({
             id: c.id,
             title: `${c.emoji ?? ''} ${c.name}`.trim(),
-            description: c.description,
+            description: c.description ?? undefined,
           })),
         },
       ],
